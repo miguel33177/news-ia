@@ -1,7 +1,5 @@
 """
 Feeds RSS -> Traducao pt-PT -> Telegram
-Verifica varios feeds, traduz artigos novos com a API do Claude
-e envia-os para um chat do Telegram.
 """
 
 import html
@@ -13,8 +11,6 @@ import sys
 import feedparser
 import requests
 
-# ------------------------- Configuracao -------------------------
-
 FEEDS = [
     ("0xMovez", "https://movez.substack.com/feed"),
     ("TLDR AI", "https://tldr.tech/api/rss/ai"),
@@ -22,15 +18,19 @@ FEEDS = [
 ]
 
 STATE_FILE = "processed.json"
-MAX_FIRST_RUN = 2  # na primeira execucao, envia no maximo 2 por feed
+MAX_FIRST_RUN = 2
 
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
+TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"].strip()
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"].strip()
 
-ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"  # muda para claude-sonnet-4-6 se quiseres mais qualidade
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
-# ------------------------- Estado -------------------------
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+}
 
 
 def load_state() -> set:
@@ -45,11 +45,7 @@ def save_state(ids: set) -> None:
         json.dump(sorted(ids), f, indent=2, ensure_ascii=False)
 
 
-# ------------------------- Traducao -------------------------
-
-
 def translate_pt_pt(title: str, summary: str) -> dict:
-    """Traduz titulo e resumo para portugues europeu via API do Claude."""
     prompt = (
         "Traduz o titulo e o resumo abaixo para portugues europeu (pt-PT, "
         "nunca pt-BR). Manten termos tecnicos de IA/programacao em ingles "
@@ -79,9 +75,6 @@ def translate_pt_pt(title: str, summary: str) -> dict:
     return json.loads(text)
 
 
-# ------------------------- Telegram -------------------------
-
-
 def send_telegram(message: str) -> None:
     resp = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
@@ -93,18 +86,14 @@ def send_telegram(message: str) -> None:
         },
         timeout=30,
     )
-    resp.raise_for_status()
-
-
-# ------------------------- Utilidades -------------------------
+    if not resp.ok:
+        # mostra a razao exata do Telegram no log
+        raise RuntimeError(f"Telegram {resp.status_code}: {resp.text}")
 
 
 def fetch_page_highlights(link: str, max_items: int = 8) -> str:
-    """Fallback: extrai os titulos (h3) da pagina quando o feed nao tem resumo."""
     try:
-        resp = requests.get(
-            link, timeout=30, headers={"User-Agent": "Mozilla/5.0"}
-        )
+        resp = requests.get(link, timeout=30, headers=BROWSER_HEADERS)
         resp.raise_for_status()
         titles = re.findall(r"<h3[^>]*>(.*?)</h3>", resp.text, re.DOTALL)
         clean = []
@@ -119,7 +108,6 @@ def fetch_page_highlights(link: str, max_items: int = 8) -> str:
 
 
 def clean_summary(raw_html: str, max_chars: int = 600) -> str:
-    """Remove HTML e limita o tamanho do resumo."""
     text = re.sub(r"<[^>]+>", " ", raw_html or "")
     text = html.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
@@ -128,9 +116,19 @@ def clean_summary(raw_html: str, max_chars: int = 600) -> str:
     return text
 
 
+def fetch_feed(url: str):
+    """Descarrega o feed com headers de browser e so depois faz o parse."""
+    try:
+        resp = requests.get(url, timeout=30, headers=BROWSER_HEADERS)
+        resp.raise_for_status()
+        return feedparser.parse(resp.content)
+    except Exception as exc:
+        print(f"Falha ao descarregar {url}: {exc}", file=sys.stderr)
+        return feedparser.parse(url, agent=BROWSER_HEADERS["User-Agent"])
+
+
 def process_feed(source: str, url: str, processed: set) -> int:
-    """Processa um feed; devolve o numero de artigos enviados."""
-    feed = feedparser.parse(url, agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")
+    feed = fetch_feed(url)
     if feed.bozo and not feed.entries:
         print(f"[{source}] Erro ao ler o feed: {feed.bozo_exception}", file=sys.stderr)
         return 0
@@ -147,7 +145,7 @@ def process_feed(source: str, url: str, processed: set) -> int:
         new_entries = new_entries[:MAX_FIRST_RUN]
 
     sent = 0
-    for entry in reversed(new_entries):  # do mais antigo para o mais recente
+    for entry in reversed(new_entries):
         entry_id = entry.get("id", entry.get("link"))
         title = entry.get("title", "(sem titulo)")
         link = entry.get("link", "")
@@ -180,9 +178,6 @@ def process_feed(source: str, url: str, processed: set) -> int:
             print(f"[{source}] Falha no envio de '{title}': {exc}", file=sys.stderr)
 
     return sent
-
-
-# ------------------------- Fluxo principal -------------------------
 
 
 def main() -> None:
