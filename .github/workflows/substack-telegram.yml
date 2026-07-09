@@ -1,0 +1,43 @@
+name: Substack para Telegram
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # a cada hora, ao minuto 0 (UTC)
+  workflow_dispatch:        # permite correr manualmente no separador Actions
+
+permissions:
+  contents: write           # necessario para guardar o processed.json
+
+concurrency:
+  group: substack-telegram
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obter o codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Correr o script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python main.py
+
+      - name: Guardar historico (processed.json)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add processed.json
+          git diff --cached --quiet || git commit -m "Atualizar historico de artigos processados"
+          git push
