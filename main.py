@@ -130,7 +130,7 @@ def clean_summary(raw_html: str, max_chars: int = 600) -> str:
 
 def process_feed(source: str, url: str, processed: set) -> int:
     """Processa um feed; devolve o numero de artigos enviados."""
-    feed = feedparser.parse(url)
+    feed = feedparser.parse(url, agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")
     if feed.bozo and not feed.entries:
         print(f"[{source}] Erro ao ler o feed: {feed.bozo_exception}", file=sys.stderr)
         return 0
