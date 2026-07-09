@@ -2,7 +2,7 @@ name: Substack para Telegram
 
 on:
   schedule:
-    - cron: "0 * * * *"   # a cada hora, ao minuto 0 (UTC)
+    - cron: "0 7,18 * * *"   # a cada hora, ao minuto 0 (UTC)
   workflow_dispatch:        # permite correr manualmente no separador Actions
 
 permissions:
