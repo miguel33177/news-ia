@@ -1,7 +1,7 @@
 """
-Feeds RSS -> Traducao pt-PT -> Telegram
+Feeds RSS -> Traducao pt-PT -> Telegram + Microsoft Teams
 Verifica varios feeds, traduz artigos novos com a API do Claude
-e envia-os para um chat do Telegram.
+e envia-os para um chat do Telegram e/ou um canal do Teams.
 """
 
 import html
@@ -27,6 +27,10 @@ MAX_FIRST_RUN = 2  # na primeira execucao de um feed, envia no maximo 2
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"].strip()
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"].strip()
+
+# Opcional: se nao definires este segredo no GitHub, o envio para o Teams
+# e simplesmente ignorado (o Telegram continua a funcionar na mesma).
+TEAMS_WEBHOOK_URL = os.environ.get("TEAMS_WEBHOOK_URL", "").strip()
 
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
@@ -163,6 +167,35 @@ def send_telegram(message: str) -> None:
         raise RuntimeError(f"Telegram {resp.status_code}: {resp.text}")
 
 
+# ------------------------- Microsoft Teams -------------------------
+
+
+def send_teams(source: str, titulo: str, resumo: str, published: str, link: str) -> None:
+    """
+    Envia o artigo para o canal do Teams via webhook do Power Automate.
+    Se TEAMS_WEBHOOK_URL nao estiver configurado, nao faz nada (Telegram
+    continua a funcionar normalmente).
+    """
+    if not TEAMS_WEBHOOK_URL:
+        return
+
+    texto = (
+        f"📡 **{source}**\n\n"
+        f"**{titulo}**\n\n"
+        f"{resumo}\n\n"
+        f"🗓 {published}\n\n"
+        f"🔗 [Ler original]({link})"
+    )
+
+    resp = requests.post(
+        TEAMS_WEBHOOK_URL,
+        json={"text": texto},
+        timeout=30,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Teams {resp.status_code}: {resp.text}")
+
+
 # ------------------------- Utilidades -------------------------
 
 
@@ -221,6 +254,7 @@ def process_feed(source: str, url: str, processed: set) -> int:
             print(f"[{source}] Falha na traducao ({exc}); envio o original.", file=sys.stderr)
             titulo, resumo = entry["title"], summary
 
+        # ---- Telegram ----
         message = (
             f"📡 <b>{html.escape(source)}</b>\n"
             f"📰 <b>{html.escape(titulo)}</b>\n\n"
@@ -228,14 +262,28 @@ def process_feed(source: str, url: str, processed: set) -> int:
             f"🗓 {html.escape(entry['published'])}\n"
             f"🔗 {entry['link']}"
         )
-
+        telegram_ok = True
         try:
             send_telegram(message)
+            print(f"[{source}] Enviado (Telegram): {entry['title']}")
+        except Exception as exc:
+            telegram_ok = False
+            print(f"[{source}] Falha no envio Telegram de '{entry['title']}': {exc}", file=sys.stderr)
+
+        # ---- Microsoft Teams ----
+        teams_ok = True
+        try:
+            send_teams(source, titulo, resumo, entry["published"], entry["link"])
+            if TEAMS_WEBHOOK_URL:
+                print(f"[{source}] Enviado (Teams): {entry['title']}")
+        except Exception as exc:
+            teams_ok = False
+            print(f"[{source}] Falha no envio Teams de '{entry['title']}': {exc}", file=sys.stderr)
+
+        # marca como processado se pelo menos um canal recebeu com sucesso
+        if telegram_ok or teams_ok:
             processed.add(entry["id"])
             sent += 1
-            print(f"[{source}] Enviado: {entry['title']}")
-        except Exception as exc:
-            print(f"[{source}] Falha no envio de '{entry['title']}': {exc}", file=sys.stderr)
 
     return sent
 
