@@ -173,25 +173,64 @@ def send_telegram(message: str) -> None:
 def send_teams(source: str, titulo: str, resumo: str, published: str, link: str) -> None:
     """
     Envia o artigo para o canal do Teams via webhook do Power Automate.
+    Este tipo de fluxo ("Enviar alertas de webhook para um canal") exige
+    um Adaptive Card completo em 'attachments' -- texto simples nao chega.
     Se TEAMS_WEBHOOK_URL nao estiver configurado, nao faz nada (Telegram
     continua a funcionar normalmente).
     """
     if not TEAMS_WEBHOOK_URL:
         return
 
-    texto = (
-        f"📡 **{source}**\n\n"
-        f"**{titulo}**\n\n"
-        f"{resumo}\n\n"
-        f"🗓 {published}\n\n"
-        f"🔗 [Ler original]({link})"
-    )
+    payload = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "text": f"📡 {source}",
+                            "weight": "Bolder",
+                            "size": "Small",
+                            "color": "Accent",
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": titulo,
+                            "weight": "Bolder",
+                            "size": "Medium",
+                            "wrap": True,
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": resumo,
+                            "wrap": True,
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": published,
+                            "isSubtle": True,
+                            "size": "Small",
+                            "wrap": True,
+                        },
+                    ],
+                    "actions": [
+                        {
+                            "type": "Action.OpenUrl",
+                            "title": "Ler original",
+                            "url": link,
+                        }
+                    ],
+                },
+            }
+        ],
+    }
 
-    resp = requests.post(
-        TEAMS_WEBHOOK_URL,
-        json={"text": texto},
-        timeout=30,
-    )
+    resp = requests.post(TEAMS_WEBHOOK_URL, json=payload, timeout=30)
     if not resp.ok:
         raise RuntimeError(f"Teams {resp.status_code}: {resp.text}")
 
